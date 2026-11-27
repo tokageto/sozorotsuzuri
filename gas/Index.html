@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<style>
+:root{
+  --bg:#f6f5f1; --card:#ffffff; --text:#1d2327; --sub:#6b7176; --line:#e7e4dc;
+  --accent:#0f766e; --accent-ink:#ffffff; --accent-soft:#e0f2ef;
+  --today:#fff6e0; --today-line:#f2c46b; --danger:#c2410c; --ok:#15803d; --warn:#b45309;
+  --radius:14px; --shadow:0 1px 2px rgba(20,20,20,.05),0 4px 14px rgba(20,20,20,.05);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#111315; --card:#1b1e21; --text:#e9eaeb; --sub:#9ba1a6; --line:#2c3034;
+    --accent:#2dd4bf; --accent-ink:#06201d; --accent-soft:#133a36;
+    --today:#2a2414; --today-line:#8a6a26; --danger:#fb923c; --ok:#4ade80; --warn:#fbbf24;
+    --shadow:none;
+  }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--text)}
+body{font-family:system-ui,-apple-system,"Hiragino Sans","Noto Sans JP","Yu Gothic UI",sans-serif;font-size:16px;line-height:1.5}
+button,input,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer}
+a{color:var(--accent);text-decoration:none}
+h1,h2,h3,p{margin:0}
+
+/* busy indicator */
+body::before{content:"";position:fixed;top:0;left:0;height:3px;width:0;background:var(--accent);z-index:100;transition:width .3s,opacity .3s;opacity:0}
+body.busy::before{width:70%;opacity:1;transition:width 3s ease-out}
+
+.topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:6px;min-height:56px;padding:8px 12px;
+  background:var(--bg);background:color-mix(in srgb,var(--bg) 90%,transparent);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.brand{font-size:20px;font-weight:700;padding-left:4px;letter-spacing:.02em}
+.tb-title{flex:1;min-width:0;font-weight:700;font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
+.icon-btn{width:44px;height:44px;border:0;background:transparent;border-radius:12px;font-size:22px;display:grid;place-items:center;color:var(--text)}
+.icon-btn:active{background:var(--line)}
+
+.wrap{max-width:640px;margin:0 auto;padding:16px 16px 120px}
+.sec{font-size:13px;font-weight:700;color:var(--sub);margin:20px 4px 8px;letter-spacing:.06em}
+.sec:first-child{margin-top:4px}
+.list{display:grid;gap:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+
+.trip-card{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer}
+.trip-card:active{transform:scale(.99)}
+.trip-card.past{opacity:.75}
+.tc-main{flex:1;min-width:0}
+.tc-title{font-weight:700;font-size:17px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc-sub{color:var(--sub);font-size:13px;margin-top:2px}
+
+.pill{display:inline-block;flex-shrink:0;font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;background:var(--line);color:var(--sub);white-space:nowrap}
+.pill.ongoing{background:var(--accent);color:var(--accent-ink)}
+.pill.upcoming{background:var(--accent-soft);color:var(--accent)}
+.pill.today{background:var(--today-line);color:#3b2a05}
+.pill.ok{background:var(--ok);color:#fff}
+
+.empty{text-align:center;color:var(--sub);padding:56px 16px}
+.empty-ico{font-size:44px;margin-bottom:8px}
+.foot{text-align:center;font-size:13px;margin-top:32px}
+
+/* trip hero */
+.hero{padding:4px 4px 16px}
+.hero-sub{color:var(--sub);font-size:14px}
+.hero-date{font-weight:700;font-size:18px;margin:2px 0 8px}
+.hero-memo{margin-top:10px;font-size:14px;color:var(--sub);white-space:pre-wrap;word-break:break-word}
+
+/* schedule */
+.day{margin-bottom:14px;scroll-margin-top:68px}
+.day-head{display:flex;align-items:center;gap:8px;padding:4px 4px 6px}
+.day-no{font-weight:700;color:var(--accent)}
+.day-date{font-weight:700}
+.day-head .spacer{flex:1}
+.mini{border:1px solid var(--line);background:var(--card);border-radius:10px;width:34px;height:30px;font-size:18px;line-height:1;color:var(--accent)}
+.day.today .day-card{border-color:var(--today-line);background:var(--today)}
+.day-card{padding:4px 0}
+.day-empty{color:var(--sub);font-size:14px;padding:10px 16px}
+.tl{list-style:none;margin:0;padding:0}
+.tl-item{display:flex;gap:12px;padding:10px 14px;cursor:pointer;border-top:1px solid var(--line)}
+.tl-item:first-child{border-top:0}
+.tl-item:active{background:var(--line)}
+.tl-time{width:48px;flex-shrink:0;font-variant-numeric:tabular-nums;font-weight:700;color:var(--accent);font-size:15px;padding-top:1px}
+.tl-time.none{color:var(--sub);font-weight:400}
+.tl-body{flex:1;min-width:0}
+.tl-title{font-weight:600;word-break:break-word}
+.tl-place,.tl-link{display:inline-block;font-size:14px;margin-top:2px;margin-right:12px;word-break:break-all}
+.tl-memo{font-size:14px;color:var(--sub);white-space:pre-wrap;word-break:break-word;margin-top:2px}
+
+/* packing */
+.progress{padding:14px 16px;margin-bottom:14px}
+.progress .row{display:flex;justify-content:space-between;align-items:center;font-weight:700;margin-bottom:8px}
+.bar-bg{height:8px;border-radius:99px;background:var(--line);overflow:hidden}
+.bar-fg{height:100%;background:var(--accent);border-radius:99px;transition:width .3s}
+.group{margin-bottom:14px}
+.group h3{font-size:13px;color:var(--sub);font-weight:700;margin:0 4px 6px}
+.check{display:flex;align-items:center;border-top:1px solid var(--line)}
+.check:first-child{border-top:0}
+.cb{width:52px;height:48px;flex-shrink:0;border:0;background:transparent;display:grid;place-items:center}
+.cb i{width:24px;height:24px;border:2px solid var(--sub);border-radius:7px;display:grid;place-items:center;font-style:normal;font-size:15px;color:transparent;transition:all .15s}
+.check.done .cb i{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.ck-body{flex:1;min-width:0;padding:10px 14px 10px 0;cursor:pointer}
+.check.done .ck-title{text-decoration:line-through;color:var(--sub)}
+.ck-memo{font-size:13px;color:var(--sub)}
+
+/* expense */
+.sum{padding:16px;margin-bottom:14px}
+.sum + .sum{margin-top:-4px}
+.sum-total{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+.sum-total strong{font-size:26px;font-variant-numeric:tabular-nums}
+.cat-row{display:grid;grid-template-columns:5.5em 1fr auto;gap:10px;align-items:center;font-size:14px;padding:3px 0}
+.cat-bar{height:6px;background:var(--line);border-radius:99px;overflow:hidden}
+.cat-bar i{display:block;height:100%;background:var(--accent);border-radius:99px}
+.cat-amt{font-variant-numeric:tabular-nums;text-align:right}
+.ex-item{display:flex;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--line);cursor:pointer}
+.ex-item:first-child{border-top:0}
+.ex-item:active{background:var(--line)}
+.ex-ico{font-size:20px;width:28px;text-align:center}
+.ex-main{flex:1;min-width:0}
+.ex-title{font-weight:600;word-break:break-word}
+.ex-sub{font-size:13px;color:var(--sub)}
+.ex-amt{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* notes */
+.note{padding:14px 16px;cursor:pointer}
+.note-title{font-weight:700;margin-bottom:4px;word-break:break-word}
+.note-body{white-space:pre-wrap;word-break:break-word;font-size:15px}
+.note .tl-link{margin-top:8px}
+
+.hint{text-align:center;color:var(--sub);padding:40px 16px}
+.hint .empty-ico{font-size:36px}
+.btn{display:block;width:100%;min-height:46px;border-radius:12px;border:1px solid var(--line);background:var(--card);font-weight:700;margin-top:12px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.danger{color:var(--danger);margin-top:20px}
+.btn.danger.armed{background:var(--danger);border-color:var(--danger);color:#fff}
+
+/* floating + tab bar */
+.fab{position:fixed;right:max(16px,calc(50% - 304px));bottom:calc(24px + env(safe-area-inset-bottom));width:58px;height:58px;border-radius:50%;border:0;background:var(--accent);color:var(--accent-ink);font-size:30px;line-height:1;box-shadow:0 6px 18px rgba(0,0,0,.2);z-index:30}
+.fab.with-nav{bottom:calc(84px + env(safe-area-inset-bottom))}
+.fab:active{transform:scale(.95)}
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:25;display:grid;grid-template-columns:repeat(4,1fr);background:var(--card);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+.tab{border:0;background:transparent;height:62px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;font-size:11px;color:var(--sub);font-weight:600}
+.tab-ico{font-size:21px;filter:grayscale(1);opacity:.6}
+.tab.on{color:var(--accent)}
+.tab.on .tab-ico{filter:none;opacity:1}
+.has-tabbar .wrap{padding-bottom:170px}
+
+/* bottom sheet form */
+.overlay{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.42);display:flex;align-items:flex-end;justify-content:center;animation:fade .15s}
+.sheet{width:100%;max-width:640px;max-height:92vh;overflow:auto;background:var(--card);border-radius:18px 18px 0 0;padding:0 16px calc(20px + env(safe-area-inset-bottom));animation:up .22s ease-out}
+.sheet-head{position:sticky;top:0;background:var(--card);display:flex;align-items:center;justify-content:space-between;padding:12px 0;margin-bottom:6px;border-bottom:1px solid var(--line);z-index:1}
+.link-btn{border:0;background:transparent;color:var(--accent);padding:8px 4px;min-width:64px;text-align:left}
+.link-btn:last-child{text-align:right}
+.link-btn.strong{font-weight:700}
+.link-btn:disabled{opacity:.4}
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.f{grid-column:1/-1;min-width:0}
+.f.half{grid-column:auto}
+.f-label{display:block;font-size:13px;color:var(--sub);font-weight:600;margin:0 2px 4px}
+.f-label em{color:var(--danger);font-style:normal}
+.f input,.f textarea{width:100%;min-width:0;min-height:46px;border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:10px 12px;font-size:16px;outline:none}
+.f input[type=date],.f input[type=time]{-webkit-appearance:none;appearance:none;display:block}
+.f textarea{resize:vertical;line-height:1.5}
+.f input:focus,.f textarea:focus{border-color:var(--accent)}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip input{position:absolute;opacity:0;pointer-events:none}
+.chip span{display:inline-block;padding:8px 12px;border-radius:999px;border:1px solid var(--line);background:var(--bg);font-size:14px}
+.chip input:checked + span{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
+
+.toast{position:fixed;left:50%;bottom:calc(96px + env(safe-area-inset-bottom));transform:translateX(-50%);max-width:calc(100% - 32px);background:#222;color:#fff;padding:10px 16px;border-radius:12px;font-size:14px;z-index:90;box-shadow:0 6px 18px rgba(0,0,0,.25);animation:fade .2s}
+.toast.err{background:var(--danger)}
+.splash{padding:80px 16px;text-align:center;color:var(--sub)}
+.splash small{display:block;margin-top:8px;word-break:break-all}
+
+@keyframes fade{from{opacity:0}to{opacity:1}}
+@keyframes up{from{transform:translateY(40px);opacity:.4}to{transform:none;opacity:1}}
+</style>
+</head>
+<body>
+<div id="app"><div class="splash">読み込み中…</div></div>
+
+<datalist id="dl-cur">
+  <option value="JPY"><option value="USD"><option value="EUR"><option value="KRW"><option value="TWD">
+  <option value="CNY"><option value="HKD"><option value="THB"><option value="SGD"><option value="GBP"><option value="AUD">
+</datalist>
+<datalist id="dl-pack"></datalist>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------------- 定数 ---------------- */
+  const TABS = [
+    { key: 'schedule', label: '日程', icon: '🗓️' },
+    { key: 'packing', label: '持ち物', icon: '🎒' },
+    { key: 'expense', label: '費用', icon: '💴' },
+    { key: 'note', label: 'メモ', icon: '📝' },
+  ];
+  const EXPENSE_CATS = ['交通', '宿泊', '食事', '観光', '買い物', 'その他'];
+  const CAT_ICON = { 交通: '🚃', 宿泊: '🏨', 食事: '🍽️', 観光: '🎫', 買い物: '🛍️', その他: '💡' };
+  const FORMS = {
+    trip: { title: '旅行', fields: [
+      { k: 'title', label: 'タイトル', req: true, ph: '例：京都 紅葉旅' },
+      { k: 'destination', label: '行き先', ph: '例：京都' },
+      { k: 'startDate', label: '出発日', type: 'date', half: true },
+      { k: 'endDate', label: '帰着日', type: 'date', half: true },
+      { k: 'memo', label: 'メモ', type: 'textarea', ph: '同行者・テーマなど' },
+    ] },
+    schedule: { title: '予定', fields: [
+      { k: 'date', label: '日付', type: 'date', half: true },
+      { k: 'time', label: '時刻', type: 'time', half: true },
+      { k: 'title', label: '内容', req: true, ph: '例：新幹線で京都へ' },
+      { k: 'place', label: '場所', ph: '入力すると地図で開けます' },
+      { k: 'memo', label: 'メモ', type: 'textarea', ph: '予約番号・座席・持ち物など' },
+      { k: 'url', label: 'URL', type: 'url', ph: 'https://' },
+    ] },
+    packing: { title: '持ち物', fields: [
+      { k: 'title', label: '持ち物', req: true },
+      { k: 'category', label: 'カテゴリ', list: 'dl-pack', ph: '例：衣類' },
+      { k: 'memo', label: 'メモ', ph: '個数など' },
+    ] },
+    expense: { title: '費用', fields: [
+      { k: 'title', label: '内容', req: true, ph: '例：ランチ' },
+      { k: 'amount', label: '金額', type: 'number', req: true, half: true, inputmode: 'decimal' },
+      { k: 'currency', label: '通貨', half: true, list: 'dl-cur' },
+      { k: 'category', label: 'カテゴリ', type: 'chips', options: EXPENSE_CATS },
+      { k: 'date', label: '日付', type: 'date' },
+      { k: 'memo', label: 'メモ' },
+    ] },
+    note: { title: 'メモ', fields: [
+      { k: 'title', label: 'タイトル', req: true, ph: '例：ホテル予約情報' },
+      { k: 'memo', label: '内容', type: 'textarea', rows: 8, ph: '予約番号・住所・電話番号など' },
+      { k: 'url', label: 'URL', type: 'url', ph: 'https://' },
+    ] },
+  };
+
+  /* ---------------- 状態 ---------------- */
+  const S = { view: 'loading', trips: [], trip: null, items: [], itemsLoading: false, tab: 'schedule', dbUrl: '' };
+  const app = document.getElementById('app');
+  let busy = 0;
+  let navToken = 0;
+
+  /* ---------------- ユーティリティ ---------------- */
+  function call(fn) {
+    const args = Array.prototype.slice.call(arguments, 1);
+    setBusy(1);
+    return new Promise((resolve, reject) => {
+      google.script.run
+        .withSuccessHandler(r => { setBusy(-1); resolve(r); })
+        .withFailureHandler(e => { setBusy(-1); reject(e); })[fn].apply(null, args);
+    });
+  }
+  function setBusy(d) { busy += d; document.body.classList.toggle('busy', busy > 0); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  function toast(msg, isErr) {
+    const old = document.querySelector('.toast'); if (old) old.remove();
+    const el = document.createElement('div');
+    el.className = 'toast' + (isErr ? ' err' : '');
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), isErr ? 4500 : 2200);
+  }
+  function fail(e) {
+    console.error(e);
+    const msg = (e && e.message) || String(e);
+    toast(msg.replace(/^Error:\s*/, ''), true);
+  }
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  function parseYmd(s) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || '');
+    return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+  }
+  const todayStr = () => ymd(new Date());
+  const WD = '日月火水木金土';
+  function fmtDate(s, withYear) {
+    const d = parseYmd(s); if (!d) return '';
+    return (withYear ? d.getFullYear() + '/' : '') + (d.getMonth() + 1) + '/' + d.getDate() + '(' + WD[d.getDay()] + ')';
+  }
+  const daysBetween = (a, b) => Math.round((parseYmd(b) - parseYmd(a)) / 86400000);
+  const cmp = (a, b) => String(a || '').localeCompare(String(b || ''));
+  const isDone = i => i.done === '1' || i.done === 'true' || i.done === 'TRUE';
+  const safeUrl = u => /^https?:\/\//i.test(u || '') ? u : '';
+  const mapUrl = q => 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
+
+  function tripStatus(t) {
+    const today = todayStr();
+    if (!t.startDate) return { kind: 'upcoming', label: '日程未定' };
+    const end = t.endDate || t.startDate;
+    if (today < t.startDate) {
+      const n = daysBetween(today, t.startDate);
+      return { kind: 'upcoming', label: n === 1 ? '明日出発' : 'あと' + n + '日' };
+    }
+    if (today <= end) return { kind: 'ongoing', label: '旅行中・' + (daysBetween(t.startDate, today) + 1) + '日目' };
+    return { kind: 'past', label: '思い出' };
+  }
+  function fmtRange(t) {
+    if (!t.startDate) return '日程未定';
+    const s = fmtDate(t.startDate, true);
+    if (!t.endDate || t.endDate === t.startDate) return s + '（日帰り）';
+    const n = daysBetween(t.startDate, t.endDate);
+    const sameYear = t.endDate.slice(0, 4) === t.startDate.slice(0, 4);
+    return s + ' 〜 ' + fmtDate(t.endDate, !sameYear) + '（' + n + '泊' + (n + 1) + '日）';
+  }
+  function money(amount, cur) {
+    cur = (cur || 'JPY').toUpperCase();
+    const n = Number(amount) || 0;
+    try {
+      return new Intl.NumberFormat('ja-JP', { style: 'currency', currency: cur, maximumFractionDigits: cur === 'JPY' || cur === 'KRW' ? 0 : 2 }).format(n);
+    } catch (e) {
+      return n.toLocaleString('ja-JP') + ' ' + cur;
+    }
+  }
+  function upsertLocal(arr, obj) {
+    const i = arr.findIndex(x => x.id === obj.id);
+    if (i >= 0) arr[i] = obj; else arr.push(obj);
+  }
+  function hint(icon, text) {
+    return '<div class="hint"><div class="empty-ico">' + icon + '</div><p>' + text + '</p></div>';
+  }
+
+  /* ---------------- 画面遷移 ---------------- */
+  function pushHist(st, replace) {
+    if (!(window.google && google.script && google.script.history)) return;
+    const hash = st.view === 'trip' ? 'trip=' + encodeURIComponent(st.id) + '&tab=' + st.tab : '';
+    google.script.history[replace ? 'replace' : 'push'](st, {}, hash);
+  }
+  function showHome(push) {
+    navToken++;
+    S.view = 'home'; S.trip = null; S.items = []; S.itemsLoading = false;
+    render(); window.scrollTo(0, 0);
+    if (push) pushHist({ view: 'home' });
+  }
+  async function openTrip(id, tab, push) {
+    const token = ++navToken;
+    S.tab = TABS.some(t => t.key === tab) ? tab : 'schedule';
+    const cached = S.trips.find(t => t.id === id);
+    if (cached) {
+      S.view = 'trip'; S.trip = cached; S.items = []; S.itemsLoading = true;
+      render(); window.scrollTo(0, 0);
+    }
+    if (push) pushHist({ view: 'trip', id: id, tab: S.tab });
+    try {
+      const r = await call('api_getTrip', id);
+      if (token !== navToken) return;
+      upsertLocal(S.trips, r.trip);
+      S.view = 'trip'; S.trip = r.trip; S.items = r.items; S.itemsLoading = false;
+      render();
+      if (S.tab === 'schedule') scrollToToday();
+    } catch (e) {
+      if (token !== navToken) return;
+      fail(e); showHome(true);
+    }
+  }
+  function scrollToToday() {
+    const el = document.getElementById('today');
+    if (el) el.scrollIntoView({ block: 'start' });
+  }
+
+  function render() {
+    const y = window.scrollY;
+    if (S.view === 'home') app.innerHTML = homeHtml();
+    else if (S.view === 'trip') app.innerHTML = tripHtml();
+    document.body.classList.toggle('has-tabbar', S.view === 'trip');
+    window.scrollTo(0, y);
+  }
+
+  /* ---------------- ホーム ---------------- */
+  function homeHtml() {
+    const g = { ongoing: [], upcoming: [], past: [] };
+    S.trips.forEach(t => g[tripStatus(t).kind].push(t));
+    g.ongoing.sort((a, b) => cmp(a.startDate, b.startDate));
+    g.upcoming.sort((a, b) => cmp(a.startDate || '9999', b.startDate || '9999'));
+    g.past.sort((a, b) => cmp(b.startDate, a.startDate));
+
+    let h = '<header class="topbar"><h1 class="brand">🧳 旅のしおり</h1></header><main class="wrap">';
+    if (!S.trips.length) {
+      h += '<div class="empty"><div class="empty-ico">🗺️</div><p>まだ旅行がありません。<br>右下の「＋」から作成しましょう。</p></div>';
+    }
+    [['ongoing', '旅行中'], ['upcoming', 'これから'], ['past', 'これまで']].forEach(([k, label]) => {
+      if (!g[k].length) return;
+      h += '<h2 class="sec">' + label + '</h2><div class="list">' + g[k].map(tripCard).join('') + '</div>';
+    });
+    if (S.dbUrl) h += '<p class="foot"><a href="' + esc(S.dbUrl) + '" target="_blank" rel="noopener">データ（スプレッドシート）を開く</a></p>';
+    h += '</main><button class="fab" data-act="new-trip" aria-label="旅行を追加">＋</button>';
+    return h;
+  }
+  function tripCard(t) {
+    const st = tripStatus(t);
+    return '<div class="card trip-card ' + st.kind + '" role="button" tabindex="0" data-act="open-trip" data-id="' + esc(t.id) + '">' +
+      '<div class="tc-main"><div class="tc-title">' + esc(t.title) + '</div>' +
+      '<div class="tc-sub">' + (t.destination ? '📍' + esc(t.destination) + '　' : '') + esc(fmtRange(t)) + '</div></div>' +
+      '<span class="pill ' + st.kind + '">' + esc(st.label) + '</span></div>';
+  }
+
+  /* ---------------- 旅行詳細 ---------------- */
+  function tripHtml() {
+    const t = S.trip, st = tripStatus(t);
+    let h = '<header class="topbar">' +
+      '<button class="icon-btn" data-act="home" aria-label="一覧へ戻る">‹</button>' +
+      '<div class="tb-title">' + esc(t.title) + '</div>' +
+      '<button class="icon-btn" data-act="edit-trip" aria-label="旅行を編集">✎</button></header>' +
+      '<main class="wrap"><section class="hero">' +
+      (t.destination ? '<div class="hero-sub">📍 ' + esc(t.destination) + '</div>' : '') +
+      '<div class="hero-date">' + esc(fmtRange(t)) + '</div>' +
+      '<span class="pill ' + st.kind + '">' + esc(st.label) + '</span>' +
+      (t.memo ? '<div class="hero-memo">' + esc(t.memo) + '</div>' : '') +
+      '</section>';
+    if (S.itemsLoading) h += '<div class="hint">読み込み中…</div>';
+    else h += { schedule: scheduleHtml, packing: packingHtml, expense: expenseHtml, note: noteHtml }[S.tab]();
+    h += '</main><button class="fab with-nav" data-act="add" aria-label="追加">＋</button>' +
+      '<nav class="tabbar">' + TABS.map(tb =>
+        '<button class="tab' + (tb.key === S.tab ? ' on' : '') + '" data-act="tab" data-tab="' + tb.key + '">' +
+        '<span class="tab-ico">' + tb.icon + '</span><span>' + tb.label + '</span></button>').join('') +
+      '</nav>';
+    return h;
+  }
+
+  function scheduleHtml() {
+    const t = S.trip, today = todayStr();
+    const items = S.items.filter(i => i.type === 'schedule');
+    const byDate = {};
+    items.forEach(i => { (byDate[i.date || ''] = byDate[i.date || ''] || []).push(i); });
+    const dates = new Set(Object.keys(byDate).filter(Boolean));
+    if (t.startDate) {
+      const d = parseYmd(t.startDate), e = parseYmd(t.endDate || t.startDate);
+      for (let n = 0; d <= e && n < 60; n++) { dates.add(ymd(d)); d.setDate(d.getDate() + 1); }
+    }
+    const sorted = Array.from(dates).sort();
+    if (!sorted.length && !byDate['']) return hint('🗓️', '出発日を設定するか、「＋」から予定を追加しましょう');
+
+    const byTime = (a, b) => cmp(a.time || '99:99', b.time || '99:99') || cmp(a.createdAt, b.createdAt);
+    let h = '';
+    sorted.forEach(date => {
+      const list = (byDate[date] || []).sort(byTime);
+      const dayNo = t.startDate ? daysBetween(t.startDate, date) + 1 : 0;
+      const isToday = date === today;
+      h += '<section class="day' + (isToday ? ' today" id="today' : '') + '">' +
+        '<div class="day-head">' +
+        (dayNo >= 1 ? '<span class="day-no">' + dayNo + '日目</span>' : '') +
+        '<span class="day-date">' + fmtDate(date) + '</span>' +
+        (isToday ? '<span class="pill today">今日</span>' : '') +
+        '<span class="spacer"></span><button class="mini" data-act="add" data-date="' + date + '" aria-label="この日に予定を追加">＋</button></div>' +
+        '<div class="card day-card">' +
+        (list.length ? '<ol class="tl">' + list.map(scheduleItem).join('') + '</ol>' : '<div class="day-empty">予定なし</div>') +
+        '</div></section>';
+    });
+    if (byDate['']) {
+      h += '<section class="day"><div class="day-head"><span class="day-date">日付未定</span></div>' +
+        '<div class="card day-card"><ol class="tl">' + byDate[''].sort(byTime).map(scheduleItem).join('') + '</ol></div></section>';
+    }
+    return h;
+  }
+  function scheduleItem(i) {
+    const url = safeUrl(i.url);
+    return '<li class="tl-item" data-act="edit" data-id="' + esc(i.id) + '">' +
+      '<div class="tl-time' + (i.time ? '' : ' none') + '">' + (i.time ? esc(i.time) : '—') + '</div>' +
+      '<div class="tl-body"><div class="tl-title">' + esc(i.title) + '</div>' +
+      (i.memo ? '<div class="tl-memo">' + esc(i.memo) + '</div>' : '') +
+      (i.place ? '<a class="tl-place" href="' + esc(mapUrl(i.place)) + '" target="_blank" rel="noopener">📍 ' + esc(i.place) + '</a>' : '') +
+      (url ? '<a class="tl-link" href="' + esc(url) + '" target="_blank" rel="noopener">🔗 リンク</a>' : '') +
+      '</div></li>';
+  }
+
+  function packingHtml() {
+    const items = S.items.filter(i => i.type === 'packing');
+    const done = items.filter(isDone).length;
+    if (!items.length) {
+      return hint('🎒', '持ち物リストはまだ空です') +
+        '<button class="btn primary" data-act="template">定番の持ち物リストを追加</button>';
+    }
+    const pct = Math.round(done / items.length * 100);
+    let h = '<div class="card progress"><div class="row"><span>準備 ' + done + ' / ' + items.length + '</span>' +
+      (done === items.length ? '<span class="pill ok">準備完了！</span>' : '<span class="pill">' + pct + '%</span>') + '</div>' +
+      '<div class="bar-bg"><div class="bar-fg" style="width:' + pct + '%"></div></div></div>';
+    const groups = new Map();
+    items.forEach(i => {
+      const c = i.category || '未分類';
+      if (!groups.has(c)) groups.set(c, []);
+      groups.get(c).push(i);
+    });
+    groups.forEach((list, cat) => {
+      h += '<div class="group"><h3>' + esc(cat) + '</h3><div class="card">' + list.map(i =>
+        '<div class="check' + (isDone(i) ? ' done' : '') + '">' +
+        '<button class="cb" data-act="toggle" data-id="' + esc(i.id) + '" aria-label="チェック"><i>✓</i></button>' +
+        '<div class="ck-body" data-act="edit" data-id="' + esc(i.id) + '"><div class="ck-title">' + esc(i.title) + '</div>' +
+        (i.memo ? '<div class="ck-memo">' + esc(i.memo) + '</div>' : '') + '</div></div>').join('') +
+        '</div></div>';
+    });
+    h += '<button class="btn" data-act="template">定番の持ち物を追加</button>';
+    if (done) h += '<button class="btn" data-act="uncheck-all">チェックをすべて外す</button>';
+    return h;
+  }
+
+  function expenseHtml() {
+    const items = S.items.filter(i => i.type === 'expense');
+    if (!items.length) return hint('💴', '使ったお金を「＋」から記録しましょう');
+    const byCur = {};
+    items.forEach(i => {
+      const c = (i.currency || 'JPY').toUpperCase();
+      const o = byCur[c] = byCur[c] || { total: 0, cats: {} };
+      const n = Number(i.amount) || 0;
+      o.total += n;
+      const cat = i.category || 'その他';
+      o.cats[cat] = (o.cats[cat] || 0) + n;
+    });
+    let h = '';
+    Object.keys(byCur).forEach(c => {
+      const o = byCur[c];
+      const cats = Object.entries(o.cats).sort((a, b) => b[1] - a[1]);
+      h += '<div class="card sum"><div class="sum-total"><span>合計' + (c !== 'JPY' || Object.keys(byCur).length > 1 ? '（' + esc(c) + '）' : '') + '</span>' +
+        '<strong>' + esc(money(o.total, c)) + '</strong></div>' +
+        cats.map(([cat, n]) => {
+          const w = o.total > 0 ? Math.min(100, Math.max(2, Math.round(n / o.total * 100))) : 0;
+          return '<div class="cat-row"><span>' + (CAT_ICON[cat] || '') + ' ' + esc(cat) + '</span>' +
+            '<span class="cat-bar"><i style="width:' + w + '%"></i></span>' +
+            '<span class="cat-amt">' + esc(money(n, c)) + '</span></div>';
+        }).join('') + '</div>';
+    });
+    const sorted = items.slice().sort((a, b) => cmp(b.date, a.date) || cmp(b.createdAt, a.createdAt));
+    const groups = new Map();
+    sorted.forEach(i => {
+      const k = i.date || '';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(i);
+    });
+    groups.forEach((list, date) => {
+      h += '<div class="group"><h3>' + (date ? esc(fmtDate(date)) : '日付なし') + '</h3><div class="card">' + list.map(i =>
+        '<div class="ex-item" data-act="edit" data-id="' + esc(i.id) + '">' +
+        '<span class="ex-ico">' + (CAT_ICON[i.category] || '💡') + '</span>' +
+        '<div class="ex-main"><div class="ex-title">' + esc(i.title) + '</div>' +
+        '<div class="ex-sub">' + esc(i.category || 'その他') + (i.memo ? '・' + esc(i.memo) : '') + '</div></div>' +
+        '<span class="ex-amt">' + esc(money(i.amount, i.currency)) + '</span></div>').join('') +
+        '</div></div>';
+    });
+    return h;
+  }
+
+  function noteHtml() {
+    const items = S.items.filter(i => i.type === 'note').sort((a, b) => cmp(a.createdAt, b.createdAt));
+    if (!items.length) return hint('📝', '予約番号・ホテルの住所・緊急連絡先など<br>旅先で見たい情報をメモしておきましょう');
+    return '<div class="list">' + items.map(i => {
+      const url = safeUrl(i.url);
+      return '<div class="card note" data-act="edit" data-id="' + esc(i.id) + '">' +
+        '<div class="note-title">' + esc(i.title) + '</div>' +
+        (i.memo ? '<div class="note-body">' + esc(i.memo) + '</div>' : '') +
+        (url ? '<a class="tl-link" href="' + esc(url) + '" target="_blank" rel="noopener">🔗 ' + esc(url) + '</a>' : '') +
+        '</div>';
+    }).join('') + '</div>';
+  }
+
+  /* ---------------- 入力フォーム ---------------- */
+  function defaultsFor(type, ds) {
+    const t = S.trip, today = todayStr();
+    const inTrip = t.startDate && today >= t.startDate && today <= (t.endDate || t.startDate);
+    const last = (ty, k) => {
+      const arr = S.items.filter(i => i.type === ty && i[k]);
+      return arr.length ? arr[arr.length - 1][k] : '';
+    };
+    if (type === 'schedule') return { date: ds.date || (inTrip ? today : (t.startDate || '')) };
+    if (type === 'expense') return { date: inTrip ? today : (t.startDate || today), currency: last('expense', 'currency') || 'JPY' };
+    if (type === 'packing') return { category: last('packing', 'category') };
+    return {};
+  }
+
+  function fieldHtml(f, v) {
+    v = v == null ? '' : v;
+    const id = 'f-' + f.k;
+    let input;
+    if (f.type === 'textarea') {
+      input = '<textarea id="' + id + '" name="' + f.k + '" rows="' + (f.rows || 4) + '" placeholder="' + esc(f.ph || '') + '">' + esc(v) + '</textarea>';
+    } else if (f.type === 'chips') {
+      input = '<div class="chips">' + f.options.map(o =>
+        '<label class="chip"><input type="radio" name="' + f.k + '" value="' + esc(o) + '"' + (o === v ? ' checked' : '') + '>' +
+        '<span>' + (CAT_ICON[o] || '') + ' ' + esc(o) + '</span></label>').join('') + '</div>';
+    } else {
+      input = '<input id="' + id + '" name="' + f.k + '" type="' + (f.type || 'text') + '" value="' + esc(v) + '"' +
+        ' placeholder="' + esc(f.ph || '') + '"' + (f.list ? ' list="' + f.list + '"' : '') +
+        (f.inputmode ? ' inputmode="' + f.inputmode + '"' : '') + (f.type === 'number' ? ' step="any"' : '') +
+        ' autocomplete="off">';
+    }
+    return '<div class="f' + (f.half ? ' half' : '') + '"><label class="f-label" for="' + id + '">' + esc(f.label) +
+      (f.req ? ' <em>*</em>' : '') + '</label>' + input + '</div>';
+  }
+
+  function openForm(kind, data) {
+    data = Object.assign({}, data || {});
+    const def = FORMS[kind];
+    const isNew = !data.id;
+
+    if (kind === 'packing') {
+      const cats = Array.from(new Set(S.items.filter(i => i.type === 'packing' && i.category).map(i => i.category)));
+      document.getElementById('dl-pack').innerHTML = cats.map(c => '<option value="' + esc(c) + '">').join('');
+    }
+
+    const ov = document.createElement('div');
+    ov.className = 'overlay';
+    ov.innerHTML = '<form class="sheet" novalidate>' +
+      '<div class="sheet-head"><button type="button" class="link-btn" data-close>キャンセル</button>' +
+      '<strong>' + def.title + (isNew ? 'を追加' : 'を編集') + '</strong>' +
+      '<button type="submit" class="link-btn strong">保存</button></div>' +
+      '<div class="fields">' + def.fields.map(f => fieldHtml(f, data[f.k])).join('') + '</div>' +
+      (isNew ? '' : '<button type="button" class="btn danger" data-del>削除</button>') +
+      '</form>';
+    document.body.appendChild(ov);
+
+    const form = ov.querySelector('form');
+    const saveBtn = form.querySelector('[type=submit]');
+    const close = () => { ov.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = e => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    ov.addEventListener('click', e => { if (e.target === ov) close(); });
+    form.querySelector('[data-close]').addEventListener('click', close);
+
+    if (isNew) {
+      const first = form.querySelector('[name="title"]');
+      if (first && kind !== 'schedule' && kind !== 'trip') setTimeout(() => first.focus(), 250);
+    }
+
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const out = {};
+      def.fields.forEach(f => { out[f.k] = String(fd.get(f.k) || '').trim(); });
+      const missing = def.fields.find(f => f.req && !out[f.k]);
+      if (missing) {
+        toast(missing.label + 'を入力してください', true);
+        const el = form.querySelector('[name="' + missing.k + '"]');
+        if (el) el.focus();
+        return;
+      }
+      const payload = Object.assign(out, { id: data.id || '' });
+      if (kind !== 'trip') { payload.type = kind; payload.tripId = S.trip.id; }
+      saveBtn.disabled = true;
+      try {
+        if (kind === 'trip') {
+          const t = await call('api_saveTrip', payload);
+          upsertLocal(S.trips, t);
+          close();
+          if (isNew) {
+            navToken++;
+            S.view = 'trip'; S.trip = t; S.items = []; S.itemsLoading = false; S.tab = 'schedule';
+            render(); window.scrollTo(0, 0);
+            pushHist({ view: 'trip', id: t.id, tab: 'schedule' });
+          } else {
+            S.trip = t; render();
+          }
+        } else {
+          const it = await call('api_saveItem', payload);
+          upsertLocal(S.items, it);
+          close();
+          render();
+          if (isNew) toast('追加しました');
+        }
+      } catch (err) {
+        fail(err);
+        saveBtn.disabled = false;
+      }
+    });
+
+    const del = form.querySelector('[data-del]');
+    if (del) {
+      del.addEventListener('click', async () => {
+        if (!del.classList.contains('armed')) {
+          del.classList.add('armed');
+          del.textContent = kind === 'trip' ? 'もう一度押すと、この旅行の全データを削除します' : 'もう一度押すと削除します';
+          return;
+        }
+        del.disabled = true;
+        try {
+          if (kind === 'trip') {
+            await call('api_deleteTrip', data.id);
+            S.trips = S.trips.filter(t => t.id !== data.id);
+            close(); showHome(true);
+          } else {
+            await call('api_deleteItem', data.id);
+            S.items = S.items.filter(i => i.id !== data.id);
+            close(); render();
+          }
+          toast('削除しました');
+        } catch (err) {
+          fail(err); del.disabled = false;
+        }
+      });
+    }
+  }
+
+  /* ---------------- 操作 ---------------- */
+  async function toggleDone(id) {
+    const it = S.items.find(i => i.id === id);
+    if (!it) return;
+    const prev = it.done;
+    it.done = isDone(it) ? '' : '1';
+    render();
+    try {
+      const r = await call('api_saveItem', { id: id, done: it.done });
+      Object.assign(it, r);
+    } catch (e) {
+      it.done = prev; render(); fail(e);
+    }
+  }
+  async function uncheckAll() {
+    const targets = S.items.filter(i => i.type === 'packing' && isDone(i));
+    targets.forEach(i => { i.done = ''; });
+    render();
+    try {
+      for (const i of targets) await call('api_saveItem', { id: i.id, done: '' });
+    } catch (e) { fail(e); }
+  }
+  async function addTemplate() {
+    try {
+      const added = await call('api_addPackingTemplate', S.trip.id);
+      S.items = S.items.concat(added);
+      render();
+      toast(added.length ? added.length + '件追加しました' : 'すべて追加済みです');
+    } catch (e) { fail(e); }
+  }
+
+  document.addEventListener('click', e => {
+    if (e.target.closest('a') || e.target.closest('.overlay')) return;
+    const el = e.target.closest('[data-act]');
+    if (!el) return;
+    const id = el.dataset.id;
+    switch (el.dataset.act) {
+      case 'new-trip': openForm('trip', {}); break;
+      case 'open-trip': openTrip(id, 'schedule', true); break;
+      case 'home': showHome(true); break;
+      case 'edit-trip': openForm('trip', S.trip); break;
+      case 'tab':
+        S.tab = el.dataset.tab;
+        pushHist({ view: 'trip', id: S.trip.id, tab: S.tab }, true);
+        render(); window.scrollTo(0, 0);
+        if (S.tab === 'schedule') scrollToToday();
+        break;
+      case 'add': openForm(S.tab, defaultsFor(S.tab, el.dataset)); break;
+      case 'edit': {
+        const it = S.items.find(i => i.id === id);
+        if (it) openForm(it.type, it);
+        break;
+      }
+      case 'toggle': toggleDone(id); break;
+      case 'template': addTemplate(); break;
+      case 'uncheck-all': uncheckAll(); break;
+    }
+  });
+  document.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[role=button][data-act]')) {
+      e.preventDefault(); e.target.click();
+    }
+  });
+
+  /* ---------------- 起動 ---------------- */
+  function init() {
+    google.script.history.setChangeHandler(e => {
+      const st = e.state || {};
+      if (st.view === 'trip' && st.id) openTrip(st.id, st.tab, false);
+      else showHome(false);
+    });
+    call('api_init').then(r => {
+      S.trips = r.trips; S.dbUrl = r.dbUrl;
+      google.script.url.getLocation(loc => {
+        const p = new URLSearchParams(loc.hash || '');
+        const id = p.get('trip');
+        if (id && S.trips.some(t => t.id === id)) return openTrip(id, p.get('tab'), false);
+        showHome(false);
+        // 旅行中の旅があれば、そのまま開く
+        const ongoing = S.trips.filter(t => tripStatus(t).kind === 'ongoing');
+        if (ongoing.length === 1) openTrip(ongoing[0].id, 'schedule', true);
+      });
+    }).catch(e => {
+      app.innerHTML = '<div class="splash">読み込みに失敗しました。ページを再読み込みしてください。<small>' +
+        esc((e && e.message) || e) + '</small></div>';
+    });
+  }
+  init();
+})();
+</script>
+</body>
+</html>
