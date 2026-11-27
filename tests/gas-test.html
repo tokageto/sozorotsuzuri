@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<!--
+  GAS（gas/Code.gs）の同期APIを、ブラウザ上の模擬環境で確かめるテスト。
+  使い方：リポジトリの一番上のフォルダで
+    python -m http.server 8765
+  を実行し、ブラウザで http://localhost:8765/tests/gas-test.html を開く。
+  すべて PASS になれば OK。
+-->
+<meta charset="utf-8">
+<title>GAS API テスト</title>
+<pre id="out">running…</pre>
+<script src="gas-mock.js"></script>
+<script src="../gas/Code.gs"></script>
+<script>
+function post(body) { return doPost({ postData: { contents: JSON.stringify(body) } }).body; }
+const results = [];
+function check(name, cond) { results.push((cond ? 'PASS ' : 'FAIL ') + name); }
+try {
+  setup();
+  const key = props.API_KEY;
+  check('bad key rejected', post({ action: 'ping', key: 'x' }).ok === false);
+  check('ping ok', post({ action: 'ping', key }).ok === true);
+
+  const t1 = { id: 'T1', title: '旅', updatedAt: '2026-11-27T10:00:00.000Z', deleted: 0, dirty: 1 };
+  const i1 = { id: 'I1', tripId: 'T1', type: 'log', memo: 'a', lat: '35.7', lng: '140.8', updatedAt: '2026-11-27T10:00:01.000Z', deleted: 0 };
+  const i2 = { id: 'I2', tripId: 'T1', type: 'expense', amount: '100', updatedAt: '2026-11-27T10:00:02.000Z', deleted: 0 };
+  let r = post({ action: 'sync', key, since: '', changes: { trips: [t1], items: [i1, i2] } });
+  check('sync1 ok', r.ok);
+  check('sync1 returns trips without dirty flag', r.changes.trips.length === 1 && r.changes.trips[0].dirty === undefined);
+  const log1 = r.changes.items.find(x => x.id === 'I1');
+  check('geocoded city', log1 && log1.city === '銚子市' && log1.pref === '千葉県' && log1.geocoded === '1');
+  const cursor = r.cursor;
+
+  r = post({ action: 'sync', key, since: cursor, changes: {} });
+  check('no changes after cursor', r.changes.trips.length === 0 && r.changes.items.length === 0);
+
+  post({ action: 'sync', key, since: cursor, changes: { items: [Object.assign({}, i2, { amount: '999', updatedAt: '2026-11-27T09:00:00.000Z' })] } });
+  const all = post({ action: 'sync', key, since: '', changes: {} });
+  check('older update ignored', all.changes.items.find(x => x.id === 'I2').amount === '100');
+
+  r = post({ action: 'sync', key, since: cursor, changes: { items: [Object.assign({}, i2, { amount: '500', updatedAt: '2026-11-27T11:00:00.000Z' })] } });
+  check('newer update applied', r.changes.items.some(x => x.id === 'I2' && x.amount === '500'));
+
+  r = post({ action: 'sync', key, since: cursor, changes: { items: [Object.assign({}, i2, { deleted: 1, updatedAt: '2026-11-27T12:00:00.000Z' })] } });
+  check('delete propagated', r.changes.items.some(x => x.id === 'I2' && x.deleted === 1));
+
+  r = post({ action: 'sync', key, since: '', changes: { items: [{ id: 'BAD' }] } });
+  check('invalid item ignored', !r.changes.items.some(x => x.id === 'BAD'));
+
+  const data = btoa('fakejpegbytes');
+  r = post({ action: 'uploadPhoto', key, photo: { id: 'P1', itemId: 'I1', tripId: 'T1', mime: 'image/jpeg', data } });
+  check('upload ok', r.ok && r.fileId);
+  const again = post({ action: 'uploadPhoto', key, photo: { id: 'P1', itemId: 'I1', tripId: 'T1', mime: 'image/jpeg', data } });
+  check('upload idempotent', again.ok && again.fileId === r.fileId && again.existed);
+  const g = post({ action: 'getPhoto', key, id: 'P1' });
+  check('getPhoto roundtrip', g.ok && atob(g.data) === 'fakejpegbytes' && g.itemId === 'I1');
+  check('unknown action rejected', post({ action: 'zzz', key }).ok === false);
+  check('doGet', doGet().body.ok === true);
+} catch (e) {
+  results.push('ERROR ' + e.stack);
+}
+document.getElementById('out').textContent = results.join('\n') + '\n\n' + out.join('\n');
+</script>

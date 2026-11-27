@@ -1,308 +1,327 @@
 /**
- * 旅のしおり — Google Apps Script ウェブアプリ（個人用）
+ * そぞろつづり — サーバー側（Google Apps Script のウェブアプリ / API）
  *
- * データは自動作成されるスプレッドシート「旅のしおり データ」に保存します。
- *   Trips シート … 旅行（タイトル・行き先・日付）
- *   Items シート … 旅行ごとの 日程 / 持ち物 / 費用 / メモ（type 列で区別）
+ * 画面（PWA）は GitHub Pages にあり、このスクリプトはデータの保存と同期だけを担当する。
+ *   ・データ：スプレッドシート「そぞろつづり データ」（Trips / Items / Photos シート）
+ *   ・写真　：Googleドライブのフォルダ「そぞろつづり 写真」
+ *   ・合言葉：スクリプト プロパティ API_KEY（setup で自動作成）
+ *
+ * 初回だけ、エディタで setup を実行してください（docs/setup.md）。
  */
 
-const APP_TITLE = '旅のしおり';
-const ITEM_TYPES = ['schedule', 'packing', 'expense', 'note'];
-const MAX_LEN = 5000;
+const APP = 'そぞろつづり';
+const API_VERSION = 1;
+const GEOCODE_PER_SYNC = 20;
 
-const SHEET_DEFS = {
-  trips: {
-    name: 'Trips',
-    headers: ['id', 'title', 'destination', 'startDate', 'endDate', 'memo', 'createdAt', 'updatedAt'],
-  },
-  items: {
-    name: 'Items',
-    headers: ['id', 'tripId', 'type', 'date', 'time', 'title', 'place', 'amount', 'currency',
-      'category', 'done', 'memo', 'url', 'createdAt', 'updatedAt'],
-  },
+const SHEETS = {
+  trips: { name: 'Trips', headers: ['id', 'updatedAt', 'deleted', 'serverAt', 'json'] },
+  items: { name: 'Items', headers: ['id', 'tripId', 'type', 'updatedAt', 'deleted', 'serverAt', 'json'] },
+  photos: { name: 'Photos', headers: ['id', 'itemId', 'tripId', 'fileId', 'mime', 'createdAt'] },
 };
 
-const PACKING_TEMPLATE = [
-  ['貴重品', ['財布', '現金', 'クレジットカード', '身分証・保険証', 'スマホ', 'パスポート（海外のみ）']],
-  ['電子機器', ['スマホ充電器', 'モバイルバッテリー', 'イヤホン', '変換プラグ（海外のみ）']],
-  ['衣類', ['着替え', '下着・靴下', 'パジャマ', '羽織るもの']],
-  ['洗面・衛生', ['歯ブラシ', 'スキンケア用品', '常備薬', 'マスク', 'ティッシュ・ウェットティッシュ']],
-  ['その他', ['折りたたみ傘', 'エコバッグ', '予約確認メール・チケット']],
-];
+/* ------------------------------------------------------------------ */
+/* 初期設定                                                             */
+/* ------------------------------------------------------------------ */
+
+/** 初回に一度エディタから実行する。保存先の作成と合言葉の発行 */
+function setup() {
+  const ss = db_();
+  const folder = photoFolder_();
+  const props = PropertiesService.getScriptProperties();
+  let key = props.getProperty('API_KEY');
+  if (!key) {
+    key = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+    props.setProperty('API_KEY', key);
+  }
+  Logger.log('データ: ' + ss.getUrl());
+  Logger.log('写真フォルダ: ' + folder.getUrl());
+  Logger.log('合言葉（アプリの設定に入力）: ' + key);
+}
+
+/** 合言葉を作り直す（漏れたかもしれないとき）。アプリ側の設定も入れ直すこと */
+function resetApiKey() {
+  const key = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+  PropertiesService.getScriptProperties().setProperty('API_KEY', key);
+  Logger.log('新しい合言葉: ' + key);
+}
 
 /* ------------------------------------------------------------------ */
-/* エントリーポイント                                                   */
+/* 入口                                                                 */
 /* ------------------------------------------------------------------ */
 
 function doGet() {
-  return HtmlService.createHtmlOutputFromFile('Index')
-    .setTitle(APP_TITLE)
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover');
+  return json_({ ok: true, app: APP, api: API_VERSION, message: 'そぞろつづりのサーバーです。アプリから POST で使います。' });
 }
 
-/** 初回に一度エディタから実行：権限の承認とデータ用スプレッドシートの作成 */
-function setup() {
-  const ss = getDb_();
-  Logger.log('データ保存先: ' + ss.getUrl());
-}
-
-/* ------------------------------------------------------------------ */
-/* クライアントから呼ぶ API                                             */
-/* ------------------------------------------------------------------ */
-
-function api_init() {
-  const ss = getDb_();
-  return { trips: readAll_('trips'), dbUrl: ss.getUrl() };
-}
-
-function api_getTrip(id) {
-  const trip = readAll_('trips').find(t => t.id === id);
-  if (!trip) throw new Error('旅行が見つかりません（削除された可能性があります）');
-  return { trip: trip, items: readAll_('items').filter(i => i.tripId === id) };
-}
-
-function api_saveTrip(input) {
-  return upsert_('trips', input, validateTrip_);
-}
-
-function api_deleteTrip(id) {
-  if (!id) throw new Error('id がありません');
-  withLock_(() => {
-    deleteWhere_('items', r => r.tripId === id);
-    deleteWhere_('trips', r => r.id === id);
-  });
-  return true;
-}
-
-function api_saveItem(input) {
-  const tripSheet = sheet_('trips');
-  return upsert_('items', input, obj => {
-    validateItem_(obj);
-    if (findRow_(tripSheet, obj.tripId) < 0) throw new Error('旅行が見つかりません');
-  });
-}
-
-function api_deleteItem(id) {
-  if (!id) throw new Error('id がありません');
-  withLock_(() => deleteWhere_('items', r => r.id === id));
-  return true;
-}
-
-/** 定番の持ち物リストを追加（同名のものはスキップ） */
-function api_addPackingTemplate(tripId) {
-  if (findRow_(sheet_('trips'), tripId) < 0) throw new Error('旅行が見つかりません');
-  const def = SHEET_DEFS.items;
-  const sh = sheet_('items');
-  return withLock_(() => {
-    const existing = new Set(readAll_('items')
-      .filter(i => i.tripId === tripId && i.type === 'packing')
-      .map(i => i.title));
-    const now = new Date().toISOString();
-    const objs = [];
-    PACKING_TEMPLATE.forEach(([category, titles]) => {
-      titles.forEach(title => {
-        if (existing.has(title)) return;
-        objs.push(fill_(def.headers, {
-          id: Utilities.getUuid(), tripId: tripId, type: 'packing',
-          title: title, category: category, createdAt: now, updatedAt: now,
-        }));
-      });
-    });
-    writeRows_(sh, sh.getLastRow() + 1, def.headers, objs);
-    return objs;
-  });
-}
-
-/* ------------------------------------------------------------------ */
-/* 入力チェック                                                         */
-/* ------------------------------------------------------------------ */
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const TIME_RE = /^\d{2}:\d{2}$/;
-
-function validateTrip_(t) {
-  if (!t.title) throw new Error('タイトルを入力してください');
-  if (t.startDate && !DATE_RE.test(t.startDate)) throw new Error('出発日の形式が正しくありません');
-  if (t.endDate && !DATE_RE.test(t.endDate)) throw new Error('帰着日の形式が正しくありません');
-  if (t.startDate && t.endDate && t.endDate < t.startDate) throw new Error('帰着日は出発日以降にしてください');
-  if (!t.startDate && t.endDate) throw new Error('出発日も入力してください');
-}
-
-function validateItem_(i) {
-  if (ITEM_TYPES.indexOf(i.type) < 0) throw new Error('種類が正しくありません');
-  if (!i.tripId) throw new Error('旅行が指定されていません');
-  if (!i.title) throw new Error('内容を入力してください');
-  if (i.date && !DATE_RE.test(i.date)) throw new Error('日付の形式が正しくありません');
-  if (i.time && !TIME_RE.test(i.time)) throw new Error('時刻の形式が正しくありません');
-  if (i.url && !/^https?:\/\//i.test(i.url)) throw new Error('URL は http:// か https:// で始めてください');
-  if (i.type === 'expense') {
-    const n = Number(i.amount);
-    if (i.amount === '' || !isFinite(n)) throw new Error('金額を数字で入力してください');
-    i.amount = String(n);
-    i.currency = (i.currency || 'JPY').toUpperCase();
-    i.category = i.category || 'その他';
-  }
-  if (i.done && i.done !== '1') i.done = '1';
-}
-
-/* ------------------------------------------------------------------ */
-/* スプレッドシート操作                                                 */
-/* ------------------------------------------------------------------ */
-
-let dbCache_ = null;
-
-function getDb_() {
-  if (dbCache_) return dbCache_;
-  const props = PropertiesService.getScriptProperties();
-  const id = props.getProperty('DB_ID');
-  if (id) {
-    try {
-      dbCache_ = SpreadsheetApp.openById(id);
-    } catch (e) {
-      throw new Error('データ用スプレッドシートを開けません。作り直す場合はスクリプト プロパティの DB_ID を削除してください。(' + e.message + ')');
+function doPost(e) {
+  try {
+    const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    checkKey_(body.key);
+    switch (body.action) {
+      case 'ping': return json_({ ok: true, app: APP, api: API_VERSION, serverTime: new Date().toISOString() });
+      case 'sync': return json_(sync_(body));
+      case 'uploadPhoto': return json_(uploadPhoto_(body.photo));
+      case 'getPhoto': return json_(getPhoto_(body.id));
+      default: throw new Error('不明な操作です: ' + body.action);
     }
-  } else {
-    const ss = SpreadsheetApp.create(APP_TITLE + ' データ');
-    const blank = ss.getSheets()[0];
-    Object.keys(SHEET_DEFS).forEach(k => ensureSheet_(ss, k));
-    ss.deleteSheet(blank);
-    props.setProperty('DB_ID', ss.getId());
-    dbCache_ = ss;
+  } catch (err) {
+    return json_({ ok: false, error: String(err && err.message || err) });
   }
-  return dbCache_;
 }
 
-function ensureSheet_(ss, key) {
-  const def = SHEET_DEFS[key];
+function json_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function checkKey_(key) {
+  const expected = PropertiesService.getScriptProperties().getProperty('API_KEY');
+  if (!expected) throw new Error('サーバーの初期設定（setup）がまだです');
+  if (typeof key !== 'string' || key.length !== expected.length) throw new Error('合言葉が違います');
+  // 文字ごとの比較時間をそろえる
+  let diff = 0;
+  for (let i = 0; i < key.length; i++) diff |= key.charCodeAt(i) ^ expected.charCodeAt(i);
+  if (diff !== 0) throw new Error('合言葉が違います');
+}
+
+/* ------------------------------------------------------------------ */
+/* 同期                                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 端末から届いた変更を保存し、since 以降にサーバーで変わったデータを返す。
+ * ・同じデータが両方で変わっていたら、updatedAt が新しい方を残す
+ * ・since の比較には、端末の時計ではなく、サーバーの同期ごとの連番（serverAt）を使う。
+ *   時刻だと、同じミリ秒の中の更新を取りこぼすことがあるため
+ */
+function sync_(body) {
+  const since = String(body.since || '');
+  const changes = body.changes || {};
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const seq = nextSeq_();
+    upsert_('trips', changes.trips || [], seq);
+    upsert_('items', changes.items || [], seq);
+    geocodePending_(seq);
+    return {
+      ok: true,
+      cursor: seq, // 次回の since に使う
+      serverTime: new Date().toISOString(),
+      changes: {
+        trips: changedSince_('trips', since),
+        items: changedSince_('items', since),
+      },
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** 同期ごとに1ずつ増える連番（12桁の文字列。文字列のまま大小を比べられる） */
+function nextSeq_() {
+  const props = PropertiesService.getScriptProperties();
+  const n = Number(props.getProperty('SYNC_SEQ') || '0') + 1;
+  props.setProperty('SYNC_SEQ', String(n));
+  return ('000000000000' + n).slice(-12);
+}
+
+function sheet_(key) {
+  const def = SHEETS[key];
+  const ss = db_();
   let sh = ss.getSheetByName(def.name);
   if (!sh) {
     sh = ss.insertSheet(def.name);
     sh.getRange(1, 1, 1, def.headers.length).setValues([def.headers]).setFontWeight('bold');
     sh.setFrozenRows(1);
-    // 日付や時刻が自動変換されないよう、すべて書式なしテキストで保存する
     sh.getRange(1, 1, sh.getMaxRows(), def.headers.length).setNumberFormat('@');
   }
   return sh;
 }
 
-function sheet_(key) {
-  return ensureSheet_(getDb_(), key);
-}
-
-function readAll_(key) {
-  const def = SHEET_DEFS[key];
+/** シートの全行を読み、{ rows, index(id→行番号) } を返す */
+function readSheet_(key) {
+  const def = SHEETS[key];
   const sh = sheet_(key);
   const last = sh.getLastRow();
-  if (last < 2) return [];
-  return sh.getRange(2, 1, last - 1, def.headers.length).getValues()
-    .filter(r => r[0] !== '' && r[0] != null)
-    .map(r => rowToObj_(def.headers, r));
+  const rows = last < 2 ? [] : sh.getRange(2, 1, last - 1, def.headers.length).getValues();
+  const index = {};
+  rows.forEach((r, i) => { if (r[0]) index[String(r[0])] = i + 2; });
+  return { sh: sh, def: def, rows: rows, index: index };
 }
 
-function rowToObj_(headers, row) {
-  const tz = Session.getScriptTimeZone();
-  const o = {};
-  headers.forEach((h, i) => {
-    let v = row[i];
-    if (v instanceof Date) v = Utilities.formatDate(v, tz, h === 'time' ? 'HH:mm' : 'yyyy-MM-dd');
-    else if (typeof v === 'boolean') v = v ? '1' : '';
-    v = v == null ? '' : String(v);
-    if (/^'[=+@]/.test(v)) v = v.slice(1);
-    o[h] = v;
-  });
-  return o;
+function toRow_(key, rec, serverAt) {
+  const deleted = rec.deleted ? '1' : '';
+  const jsonStr = JSON.stringify(rec);
+  if (key === 'trips') return [rec.id, rec.updatedAt || '', deleted, serverAt, jsonStr];
+  return [rec.id, rec.tripId || '', rec.type || '', rec.updatedAt || '', deleted, serverAt, jsonStr];
 }
 
-function toCell_(v) {
-  let s = v == null ? '' : String(v);
-  if (/^[=+@]/.test(s)) s = "'" + s; // 数式として解釈させない
-  return s;
+function validRecord_(key, rec) {
+  if (!rec || typeof rec !== 'object' || typeof rec.id !== 'string' || !rec.id) return false;
+  if (rec.id.length > 64) return false;
+  if (key === 'items' && (typeof rec.tripId !== 'string' || !rec.tripId)) return false;
+  return JSON.stringify(rec).length <= 45000; // セル1つの上限（5万文字）より小さく
 }
 
-function fill_(headers, obj) {
-  const o = {};
-  headers.forEach(h => { o[h] = obj[h] == null ? '' : String(obj[h]); });
-  return o;
-}
-
-function pick_(headers, input) {
-  const out = {};
-  if (!input || typeof input !== 'object') return out;
-  headers.forEach(h => {
-    if (h === 'createdAt' || h === 'updatedAt') return;
-    if (Object.prototype.hasOwnProperty.call(input, h) && input[h] != null) {
-      out[h] = String(input[h]).trim().slice(0, MAX_LEN);
+function upsert_(key, records, serverAt) {
+  if (!records.length) return;
+  const t = readSheet_(key);
+  const updatedCol = key === 'trips' ? 1 : 3; // 0始まりの列番号
+  const appends = [];
+  records.forEach(rec => {
+    if (!validRecord_(key, rec)) return;
+    delete rec.dirty;
+    const row = t.index[rec.id];
+    if (row) {
+      const cur = String(t.rows[row - 2][updatedCol] || '');
+      if (cur && String(rec.updatedAt || '') < cur) return; // サーバーの方が新しい
+      const values = toRow_(key, rec, serverAt);
+      t.sh.getRange(row, 1, 1, values.length).setNumberFormat('@').setValues([values]);
+      t.rows[row - 2] = values;
+    } else {
+      appends.push(toRow_(key, rec, serverAt));
+      t.index[rec.id] = -1; // 同じ送信内での重複を防ぐ
     }
+  });
+  if (appends.length) {
+    const start = t.sh.getLastRow() + 1;
+    const need = start + appends.length - 1;
+    if (need > t.sh.getMaxRows()) t.sh.insertRowsAfter(t.sh.getMaxRows(), need - t.sh.getMaxRows() + 100);
+    t.sh.getRange(start, 1, appends.length, t.def.headers.length).setNumberFormat('@').setValues(appends);
+  }
+}
+
+function changedSince_(key, since) {
+  const t = readSheet_(key);
+  const serverAtCol = key === 'trips' ? 3 : 5;
+  const jsonCol = t.def.headers.length - 1;
+  const out = [];
+  t.rows.forEach(r => {
+    if (!r[0]) return;
+    if (since && String(r[serverAtCol]) <= since) return;
+    try { out.push(JSON.parse(r[jsonCol])); } catch (e) { /* 壊れた行は飛ばす */ }
   });
   return out;
 }
 
-function findRow_(sh, id) {
-  if (!id) return -1;
-  const last = sh.getLastRow();
-  if (last < 2) return -1;
-  const ids = sh.getRange(2, 1, last - 1, 1).getValues();
-  for (let i = 0; i < ids.length; i++) {
-    if (String(ids[i][0]) === String(id)) return i + 2;
-  }
-  return -1;
-}
+/* ------------------------------------------------------------------ */
+/* 市町村の自動付与（逆ジオコーディング）                               */
+/* ------------------------------------------------------------------ */
 
-function writeRows_(sh, startRow, headers, objs) {
-  if (!objs.length) return;
-  const need = startRow + objs.length - 1;
-  if (need > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows() + 50);
-  sh.getRange(startRow, 1, objs.length, headers.length)
-    .setNumberFormat('@')
-    .setValues(objs.map(o => headers.map(h => toCell_(o[h]))));
-}
-
-/** 追加または更新。input に含まれる項目だけを上書きする */
-function upsert_(key, input, validate) {
-  const def = SHEET_DEFS[key];
-  const sh = sheet_(key);
-  return withLock_(() => {
-    const now = new Date().toISOString();
-    const patch = pick_(def.headers, input);
-    let row = findRow_(sh, patch.id);
-    let obj;
-    if (row > 0) {
-      const cur = rowToObj_(def.headers, sh.getRange(row, 1, 1, def.headers.length).getValues()[0]);
-      obj = Object.assign(cur, patch);
-    } else {
-      obj = fill_(def.headers, Object.assign({}, patch, { id: Utilities.getUuid(), createdAt: now }));
-      row = sh.getLastRow() + 1;
+/** 位置があり市町村がない「記録」に、都道府県・市町村を付ける */
+function geocodePending_(serverAt) {
+  const t = readSheet_('items');
+  let count = 0;
+  for (let i = 0; i < t.rows.length && count < GEOCODE_PER_SYNC; i++) {
+    const r = t.rows[i];
+    if (r[2] !== 'log' || r[4] === '1') continue;
+    let rec;
+    try { rec = JSON.parse(r[6]); } catch (e) { continue; }
+    if (!rec.lat || !rec.lng || rec.city || rec.geocoded === '1') continue;
+    count++;
+    const place = reverseGeocode_(Number(rec.lat), Number(rec.lng));
+    rec.geocoded = '1';
+    if (place) {
+      rec.pref = place.pref;
+      rec.city = place.city;
     }
-    obj.updatedAt = now;
-    if (validate) validate(obj);
-    writeRows_(sh, row, def.headers, [obj]);
-    return obj;
-  });
+    rec.updatedAt = new Date().toISOString();
+    const values = toRow_('items', rec, serverAt);
+    t.sh.getRange(i + 2, 1, 1, values.length).setNumberFormat('@').setValues([values]);
+  }
 }
 
-/** 条件に合う行を削除（残りの行を詰めて書き直す） */
-function deleteWhere_(key, pred) {
-  const def = SHEET_DEFS[key];
-  const sh = sheet_(key);
-  const last = sh.getLastRow();
-  if (last < 2) return 0;
-  const all = sh.getRange(2, 1, last - 1, def.headers.length).getValues()
-    .filter(r => r[0] !== '' && r[0] != null)
-    .map(r => rowToObj_(def.headers, r));
-  const keep = all.filter(o => !pred(o));
-  const removed = all.length - keep.length;
-  if (!removed) return 0;
-  sh.getRange(2, 1, last - 1, def.headers.length).clearContent();
-  writeRows_(sh, 2, def.headers, keep);
-  return removed;
-}
-
-function withLock_(fn) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(15000);
+/** 緯度経度から { pref, city } を返す。東京23区は「〇〇区」を city にする */
+function reverseGeocode_(lat, lng) {
+  if (!isFinite(lat) || !isFinite(lng)) return null;
   try {
-    return fn();
+    const res = Maps.newGeocoder().setLanguage('ja').setRegion('jp').reverseGeocode(lat, lng);
+    if (!res || res.status !== 'OK' || !res.results.length) return null;
+    let pref = '', city = '', ward = '';
+    for (const result of res.results) {
+      for (const c of result.address_components) {
+        const types = c.types || [];
+        if (!pref && types.indexOf('administrative_area_level_1') >= 0) pref = c.long_name;
+        if (!city && types.indexOf('locality') >= 0) city = c.long_name;
+        if (!ward && types.indexOf('sublocality_level_1') >= 0 && /区$/.test(c.long_name)) ward = c.long_name;
+      }
+      if (pref && city) break;
+    }
+    if (!city && ward) city = ward;
+    if (pref === '東京都' && ward && !/市$|町$|村$/.test(city)) city = ward;
+    return pref || city ? { pref: pref, city: city } : null;
+  } catch (e) {
+    console.warn('reverseGeocode failed', e);
+    return null;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 写真                                                                 */
+/* ------------------------------------------------------------------ */
+
+function uploadPhoto_(p) {
+  if (!p || typeof p.id !== 'string' || !p.id || p.id.length > 64) throw new Error('写真の情報が足りません');
+  if (typeof p.data !== 'string' || !p.data) throw new Error('写真のデータがありません');
+  const mime = /^image\/(jpeg|png|webp)$/.test(p.mime || '') ? p.mime : 'image/jpeg';
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const t = readSheet_('photos');
+    const row = t.index[p.id];
+    if (row) return { ok: true, fileId: String(t.rows[row - 2][3]), existed: true };
+    const bytes = Utilities.base64Decode(p.data);
+    if (bytes.length > 8 * 1024 * 1024) throw new Error('写真が大きすぎます');
+    const ext = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg';
+    const blob = Utilities.newBlob(bytes, mime, p.id + '.' + ext);
+    const file = photoFolder_().createFile(blob);
+    t.sh.appendRow([p.id, String(p.itemId || ''), String(p.tripId || ''), file.getId(), mime, new Date().toISOString()]);
+    return { ok: true, fileId: file.getId() };
   } finally {
     lock.releaseLock();
   }
+}
+
+function getPhoto_(id) {
+  const t = readSheet_('photos');
+  const row = t.index[String(id || '')];
+  if (!row) throw new Error('写真が見つかりません');
+  const r = t.rows[row - 2];
+  const file = DriveApp.getFileById(String(r[3]));
+  return {
+    ok: true, id: String(r[0]), itemId: String(r[1]), tripId: String(r[2]), fileId: String(r[3]),
+    mime: String(r[4] || 'image/jpeg'), data: Utilities.base64Encode(file.getBlob().getBytes()),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 保存先                                                               */
+/* ------------------------------------------------------------------ */
+
+let dbCache_ = null;
+
+function db_() {
+  if (dbCache_) return dbCache_;
+  const props = PropertiesService.getScriptProperties();
+  const id = props.getProperty('DB_ID');
+  if (id) {
+    dbCache_ = SpreadsheetApp.openById(id);
+    return dbCache_;
+  }
+  const ss = SpreadsheetApp.create(APP + ' データ');
+  const blank = ss.getSheets()[0];
+  dbCache_ = ss;
+  Object.keys(SHEETS).forEach(k => sheet_(k));
+  ss.deleteSheet(blank);
+  props.setProperty('DB_ID', ss.getId());
+  return ss;
+}
+
+function photoFolder_() {
+  const props = PropertiesService.getScriptProperties();
+  const id = props.getProperty('PHOTO_FOLDER_ID');
+  if (id) return DriveApp.getFolderById(id);
+  const folder = DriveApp.createFolder(APP + ' 写真');
+  props.setProperty('PHOTO_FOLDER_ID', folder.getId());
+  return folder;
 }

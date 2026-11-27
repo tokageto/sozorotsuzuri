@@ -20,3 +20,6 @@ dist/
 # Downloaded transit data (ODPT data must not be redistributed; GTFS is fetched by GAS)
 data/
 *.zip
+
+# Claude Code local settings
+.claude/settings.local.json

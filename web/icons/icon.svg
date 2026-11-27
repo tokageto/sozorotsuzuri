@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#0f766e"/>
+  <text x="256" y="345" font-size="286" text-anchor="middle" fill="#faf7f0" font-weight="700"
+        font-family="'Hiragino Mincho ProN','Yu Mincho','Noto Serif JP',serif">そ</text>
+  <circle cx="196" cy="420" r="12" fill="#f2c46b"/>
+  <circle cx="258" cy="410" r="12" fill="#f2c46b"/>
+  <circle cx="320" cy="420" r="12" fill="#f2c46b"/>
+</svg>
