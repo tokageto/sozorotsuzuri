@@ -19,3 +19,4 @@
 - v0.2：PWA＋GAS の構成に移行予定
 
 詳しくは [docs/requirements.md](docs/requirements.md) を参照してください。
+交通事業者ごとのデータの利用条件は [docs/operators.md](docs/operators.md) にまとめています。
