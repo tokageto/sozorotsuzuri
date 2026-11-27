@@ -2,7 +2,7 @@
 // ・同じサイトのファイルは「保存済みのものをすぐ返し、裏で最新に更新する」
 // ・GAS など外部への通信は保存しない（そのまま通す）
 
-const CACHE = 'sozorotsuzuri-v0.2.0';
+const CACHE = 'sozorotsuzuri-v0.2.1';
 const SHELL = [
   './',
   './index.html',

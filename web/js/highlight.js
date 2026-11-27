@@ -1,7 +1,26 @@
 // ハイライト画像（X などに投稿する1枚画像）を作る
 // 縦 1080x1350（4:5）。写真最大4枚＋旅のタイトル・期間・ひとこと・集計
+// どの項目を入れるかは opts.show で選ぶ（個人の特定につながる項目は、呼び出し側で既定オフにする）
 
-import { fmtRange } from './util.js';
+import { fmtRange, daysBetween } from './util.js';
+
+/** 日付の出し方：none=出さない / nights=日数だけ / month=年月まで / full=日付まで */
+export function dateText(trip, mode) {
+  if (!trip.startDate || mode === 'none') return '';
+  const end = trip.endDate || trip.startDate;
+  const n = daysBetween(trip.startDate, end);
+  const len = n > 0 ? n + '泊' + (n + 1) + '日' : '日帰り';
+  if (mode === 'nights') return len;
+  if (mode === 'month') {
+    const [y1, m1] = trip.startDate.split('-').map(Number);
+    const [y2, m2] = end.split('-').map(Number);
+    let ym = y1 + '年' + m1 + '月';
+    if (y1 !== y2) ym += '〜' + y2 + '年' + m2 + '月';
+    else if (m1 !== m2) ym += '〜' + m2 + '月';
+    return ym + '（' + len + '）';
+  }
+  return fmtRange(trip);
+}
 
 const W = 1080, H = 1350;
 
@@ -55,7 +74,7 @@ function wrapText(ctx, text, maxWidth, maxLines) {
 /**
  * @param {object} trip 旅行
  * @param {Blob[]} photos 写真（最大4枚使う）
- * @param {object} opts { comment, stats: [{label, value}] }
+ * @param {object} opts { comment, stats: [{label, value}], show: { title, destination, date } }
  * @returns {Promise<Blob>} PNG画像
  */
 export async function makeHighlight(trip, photos, opts = {}) {
@@ -63,6 +82,7 @@ export async function makeHighlight(trip, photos, opts = {}) {
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext('2d');
+  const show = Object.assign({ title: true, destination: true, date: 'nights' }, opts.show || {});
   const font = '"Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif';
   const sans = '"Hiragino Sans","Noto Sans JP","Yu Gothic",sans-serif';
 
@@ -113,13 +133,18 @@ export async function makeHighlight(trip, photos, opts = {}) {
   let y = areaY + areaH + 92;
   ctx.fillStyle = '#2b2620';
   ctx.font = '700 64px ' + font;
-  wrapText(ctx, trip.title, areaW, 1).forEach(l => { ctx.fillText(l, pad, y); y += 72; });
+  if (show.title && trip.title) {
+    wrapText(ctx, trip.title, areaW, 1).forEach(l => { ctx.fillText(l, pad, y); y += 72; });
+  }
 
-  ctx.fillStyle = '#6b6152';
-  ctx.font = '500 32px ' + sans;
-  const sub = (trip.destination ? '📍 ' + trip.destination + '　' : '') + fmtRange(trip);
-  ctx.fillText(sub, pad, y);
-  y += 60;
+  const sub = [show.destination && trip.destination ? '📍 ' + trip.destination : '', dateText(trip, show.date)]
+    .filter(Boolean).join('　');
+  if (sub) {
+    ctx.fillStyle = '#6b6152';
+    ctx.font = '500 32px ' + sans;
+    ctx.fillText(sub, pad, y);
+    y += 60;
+  }
 
   if (opts.comment) {
     ctx.fillStyle = '#3d362c';

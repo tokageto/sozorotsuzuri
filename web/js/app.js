@@ -12,7 +12,7 @@ import {
 /* 定数                                                                */
 /* ================================================================== */
 
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.2.1';
 
 const TABS = [
   { key: 'schedule', label: '日程', icon: '🗓️' },
@@ -745,6 +745,72 @@ function getGeo(form, quiet) {
 
 /* ---------- ハイライト画像 ---------- */
 
+// 画像に入れる項目。個人の特定につながる項目（risk）は既定でオフにし、初めてオンにするときに注意を出す
+const HL_ITEMS = [
+  { key: 'photos', label: '写真', def: true },
+  { key: 'title', label: '旅のタイトル', def: true },
+  { key: 'destination', label: '行き先', def: true },
+  { key: 'count', label: '記録の件数', def: true },
+  { key: 'cities', label: '訪れた市町村の数', def: true },
+  { key: 'cost', label: '旅の費用', def: false, risk: 'cost' },
+];
+const HL_DATES = [
+  { v: 'none', label: '出さない' },
+  { v: 'nights', label: '日数だけ（1泊2日など）' },
+  { v: 'month', label: '年と月まで', risk: 'date' },
+  { v: 'full', label: '日付まで', risk: 'date' },
+];
+const HL_DEFAULT = Object.assign({ date: 'nights' }, ...HL_ITEMS.map(i => ({ [i.key]: i.def })));
+const HL_RISKS = {
+  date: {
+    title: '日付を画像に入れますか？',
+    body: [
+      'いつ家を空けていたかが分かるようになります。',
+      '旅行中や帰ってすぐに投稿すると、今、留守にしていることを知らせることになります。',
+      '毎年同じ時期の旅が続くと、行動の傾向を推測されることもあります。',
+    ],
+  },
+  cost: {
+    title: '費用を画像に入れますか？',
+    body: [
+      '金額から、暮らし向きや、泊まった宿の価格帯が推測されることがあります。',
+      '行き先や日付と組み合わさると、どこに泊まったかの手がかりになることがあります。',
+    ],
+  },
+};
+
+/** 中央に出す確認ダイアログ。「入れる」なら true */
+function confirmDialog({ title, body, ok, cancel }) {
+  return new Promise(resolve => {
+    const ov = document.createElement('div');
+    ov.className = 'overlay dialog-ov';
+    ov.innerHTML = '<div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dlg-t">' +
+      '<p class="dialog-title" id="dlg-t">⚠️ ' + esc(title) + '</p>' +
+      body.map(b => '<p class="dialog-body">' + esc(b) + '</p>').join('') +
+      '<p class="dialog-note">この注意は最初の1回だけ表示します。</p>' +
+      '<div class="btn-row"><button class="btn" data-no>' + esc(cancel || 'やめておく') + '</button>' +
+      '<button class="btn primary" data-yes>' + esc(ok || '入れる') + '</button></div></div>';
+    document.body.appendChild(ov);
+    const done = v => { ov.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
+    const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); done(false); } };
+    document.addEventListener('keydown', onKey, true);
+    ov.addEventListener('click', e => { if (e.target === ov) done(false); });
+    ov.querySelector('[data-no]').addEventListener('click', () => done(false));
+    ov.querySelector('[data-yes]').addEventListener('click', () => done(true));
+    ov.querySelector('[data-no]').focus();
+  });
+}
+
+/** 注意が必要な項目なら確認する。一度「入れる」を選んだ項目は、次からは聞かない */
+async function confirmRisk(risk) {
+  if (!risk) return true;
+  const seen = (await db.getMeta('highlightWarned')) || {};
+  if (seen[risk]) return true;
+  const yes = await confirmDialog(HL_RISKS[risk]);
+  if (yes) { seen[risk] = 1; await db.setMeta('highlightWarned', seen); }
+  return yes;
+}
+
 async function openHighlight() {
   const logs = S.items.filter(i => i.type === 'log').sort((a, b) => cmp(a.date, b.date) || byTime(a, b));
   const expenses = S.items.filter(i => i.type === 'expense');
@@ -758,41 +824,77 @@ async function openHighlight() {
     : [0, 1, 2, 3].map(n => photoBlobs[Math.round(n * (photoBlobs.length - 1) / 3)]);
   const cities = new Set(logs.map(l => l.city).filter(Boolean));
   const jpy = expenses.filter(e => (e.currency || 'JPY') === 'JPY').reduce((s, e) => s + (Number(e.amount) || 0), 0);
-  const stats = [{ label: '記録', value: logs.length + '件' }];
-  if (cities.size) stats.push({ label: '訪れた市町村', value: cities.size });
-  if (jpy) stats.push({ label: '旅の費用', value: money(jpy, 'JPY') });
 
-  const { ov, close } = openSheet('<div class="sheet">' +
+  // 前回の選び方を引き継ぐ（端末の中だけに保存。同期はしない）
+  const show = Object.assign({}, HL_DEFAULT, (await db.getMeta('highlightPrefs')) || {});
+  const ongoing = tripStatus(S.trip).kind === 'ongoing';
+
+  const itemsHtml = HL_ITEMS.map(i =>
+    '<label class="chip"><input type="checkbox" data-hl-item="' + i.key + '"' + (show[i.key] ? ' checked' : '') + '>' +
+    '<span>' + esc(i.label) + (i.risk ? ' ⚠️' : '') + '</span></label>').join('');
+  const datesHtml = HL_DATES.map(d =>
+    '<label class="chip"><input type="radio" name="hl-date" value="' + d.v + '"' + (show.date === d.v ? ' checked' : '') + '>' +
+    '<span>' + esc(d.label) + (d.risk ? ' ⚠️' : '') + '</span></label>').join('');
+
+  const { ov } = openSheet('<div class="sheet">' +
     '<div class="sheet-head"><button type="button" class="link-btn" data-close>閉じる</button><strong>ハイライト画像</strong><span style="min-width:72px"></span></div>' +
     '<div class="fields"><div class="f"><label class="f-label" for="hl-comment">ひとこと（画像に入ります）</label>' +
-    '<input id="hl-comment" maxlength="60" placeholder="例：潮風とぬれ煎餅の一日" autocomplete="off"></div></div>' +
-    '<p class="f-help">写真は記録から最大4枚を自動で選びます（' + photoBlobs.length + '枚中）。</p>' +
+    '<input id="hl-comment" maxlength="60" placeholder="例：潮風とぬれ煎餅の一日" autocomplete="off"></div>' +
+    '<div class="f"><span class="f-label">画像に入れるもの</span><div class="chips">' + itemsHtml + '</div></div>' +
+    '<div class="f"><span class="f-label">日付</span><div class="chips">' + datesHtml + '</div>' +
+    '<p class="f-help">⚠️ の付いた項目は、あなたや家族を特定する手がかりになることがあるため、最初はオフにしています。</p></div></div>' +
+    (ongoing ? '<p class="hl-warn">旅行中です。投稿は帰ってからにすると、留守にしていることを知られずに済みます。</p>' : '') +
+    '<p class="f-help">写真は記録から最大4枚を自動で選びます（' + photoBlobs.length + '枚中）。画像には撮影場所などの位置情報は入りません。写っている顔・車のナンバー・家の様子には気をつけてください。</p>' +
     '<div style="margin-top:12px"><img class="preview-img" id="hl-img" alt="ハイライト画像のプレビュー"></div>' +
     '<div class="btn-row"><button class="btn primary" data-hl-share>共有する</button><button class="btn" data-hl-save>保存する</button></div>' +
     '</div>');
   const img = ov.querySelector('#hl-img');
   let blob = null, url = '';
   const build = async () => {
-    blob = await makeHighlight(S.trip, chosen, { comment: ov.querySelector('#hl-comment').value.trim(), stats });
+    const stats = [];
+    if (show.count) stats.push({ label: '記録', value: logs.length + '件' });
+    if (show.cities && cities.size) stats.push({ label: '訪れた市町村', value: cities.size });
+    if (show.cost && jpy) stats.push({ label: '旅の費用', value: money(jpy, 'JPY') });
+    blob = await makeHighlight(S.trip, show.photos ? chosen : [], {
+      comment: ov.querySelector('#hl-comment').value.trim(), stats, show,
+    });
     if (url) URL.revokeObjectURL(url);
     url = URL.createObjectURL(blob);
     img.src = url;
   };
   await build();
+  const savePrefs = () => db.setMeta('highlightPrefs', show).catch(() => {});
   ov.querySelector('#hl-comment').addEventListener('input', debounce(build, 400));
-  const filename = 'sozorotsuzuri-' + (S.trip.startDate || todayStr()) + '.png';
+  ov.querySelectorAll('[data-hl-item]').forEach(cb => cb.addEventListener('change', async () => {
+    const it = HL_ITEMS.find(i => i.key === cb.dataset.hlItem);
+    if (cb.checked && !(await confirmRisk(it.risk))) { cb.checked = false; return; }
+    show[it.key] = cb.checked;
+    savePrefs(); build();
+  }));
+  ov.querySelectorAll('input[name="hl-date"]').forEach(rb => rb.addEventListener('change', async () => {
+    const d = HL_DATES.find(x => x.v === rb.value);
+    if (!(await confirmRisk(d.risk))) {
+      const prev = ov.querySelector('input[name="hl-date"][value="' + show.date + '"]');
+      if (prev) prev.checked = true;
+      return;
+    }
+    show.date = d.v;
+    savePrefs(); build();
+  }));
+  // ファイル名に日付を入れない（共有先でファイル名が見えることがあるため）
+  const filename = 'sozorotsuzuri-highlight.png';
   ov.querySelector('[data-hl-save]').addEventListener('click', () => downloadBlob(blob, filename));
   ov.querySelector('[data-hl-share]').addEventListener('click', async () => {
     const file = new File([blob], filename, { type: 'image/png' });
+    const title = show.title ? S.trip.title : 'そぞろつづり';
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: S.trip.title, text: S.trip.title + ' #そぞろつづり' }); } catch (e) { /* キャンセル */ }
+      try { await navigator.share({ files: [file], title, text: (show.title ? S.trip.title + ' ' : '') + '#そぞろつづり' }); } catch (e) { /* キャンセル */ }
     } else {
       downloadBlob(blob, filename);
       toast('共有に対応していないため、画像を保存しました');
     }
   });
   ov.querySelector('[data-close]').addEventListener('click', () => { if (url) URL.revokeObjectURL(url); });
-  void close;
 }
 
 /* ================================================================== */
